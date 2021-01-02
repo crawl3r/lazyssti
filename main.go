@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -116,24 +117,24 @@ func generatePayload(template string, paramNumber int) (string, string) {
 
 	switch template {
 	case templateJinja2:
-		payload = "skid{{4*'4'}}life"
-		injectionResult = "skid4444life"
+		payload = "skid{{" + strconv.Itoa(paramNumber) + "*'" + strconv.Itoa(paramNumber) + "'}}life"
+		injectionResult = "skid" + strings.Repeat(strconv.Itoa(paramNumber), paramNumber) + "life"
 
 	case templateMako:
-		payload = "ski${'4'.join('dl')}ife"
-		injectionResult = "skid4life"
+		payload = "ski${'" + strconv.Itoa(paramNumber) + "'.join('dl')}ife"
+		injectionResult = "skid" + strconv.Itoa(paramNumber) + "life"
 
 	case templateSmarty:
-		payload = "skid4{*comment*}life"
-		injectionResult = "skid4life"
+		payload = "skid" + strconv.Itoa(paramNumber) + "{*comment*}life"
+		injectionResult = "skid" + strconv.Itoa(paramNumber) + "life"
 
 	case templateTwig:
-		payload = "skid{{2*'2'}}life"
-		injectionResult = "skid4life"
+		payload = "skid{{" + strconv.Itoa(paramNumber) + "*'" + strconv.Itoa(paramNumber) + "'}}life"
+		injectionResult = "skid" + strconv.Itoa(paramNumber*paramNumber) + "life"
 
 	case "unknown":
-		payload = "skid${2*2}life"
-		injectionResult = "skid4life"
+		payload = "skid${" + strconv.Itoa(paramNumber) + "*" + strconv.Itoa(paramNumber) + "}life"
+		injectionResult = "skid" + strconv.Itoa(paramNumber*paramNumber) + "life"
 	}
 
 	return payload, injectionResult
