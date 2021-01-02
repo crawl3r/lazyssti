@@ -10,11 +10,20 @@ go get github.com/crawl3r/lazyssti
   
 ### Usage   
   
+Default:  
 ```
 cat urls.txt | ./lazyssti
+```  
+  
+Quiet mode and saving output:  
 ```
+cat urls.txt | ./lazyssti -q -o wins.txt
+```  
   
 Ideal to use with tools such as hakrawler, gau, waybackurls etc.  
+```
+echo "https://hackerone.com" | tools/hakrawler -nocolor | sort -ufd | grep "\[url\]" | while read tag url; do echo $url; done
+```  
   
 ### License  
   

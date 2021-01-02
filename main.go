@@ -33,6 +33,11 @@ func main() {
 	saveOutput := outputFileFlag != ""
 	outputToSave := []string{}
 
+	if !quietMode {
+		banner()
+		fmt.Println("")
+	}
+
 	injectionPayload, injectionResult := generatePayload()
 
 	// main logic
@@ -42,6 +47,10 @@ func main() {
 		u = replaceParameters(u, injectionPayload)
 		if u == "" {
 			continue
+		}
+
+		if !quietMode {
+			fmt.Println("Generated URL:", u)
 		}
 
 		// If the identified URL has neither http or https infront of it. Create both and scan them.
@@ -67,7 +76,7 @@ func main() {
 		}
 	}
 
-	if saveOutput {
+	if saveOutput && len(outputToSave) > 0 {
 		file, err := os.OpenFile(outputFileFlag, os.O_CREATE|os.O_WRONLY, 0644)
 
 		if err != nil && !quietMode {
@@ -83,6 +92,14 @@ func main() {
 		datawriter.Flush()
 		file.Close()
 	}
+}
+
+func banner() {
+	fmt.Println("---------------------------------------------------")
+	fmt.Println("lazyssti -> Crawl3r")
+	fmt.Println("Generates SSTI URL's and highlights possible vulns")
+	fmt.Println("Run again with -q for cleaner output")
+	fmt.Println("---------------------------------------------------")
 }
 
 // TODO: Should we randomise this? Do we care? probably not.
@@ -126,7 +143,6 @@ func replaceParameters(url string, payload string) string {
 	}
 
 	finalUrl = removeLastRune(finalUrl)
-	fmt.Println(finalUrl)
 	return finalUrl
 }
 
