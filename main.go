@@ -12,6 +12,12 @@ import (
 	"strings"
 )
 
+// global vars for templates
+var templateJinja2 = "Jinja2" // -> {{7*'7'}} would result in 7777777 in Jinja2
+var templateMako = "Mako"     // -> ${7*7} -> ${"z".join("ab")} is a payload that can identify Mako
+var templateSmarty = "Smarty" // -> ${7*7} -> a{*comment*}b is a payload that can identify Smarty
+var templateTwig = "Twig"     // -> {{7*'7'}} would result in 49 in Twig
+
 func main() {
 	sc := bufio.NewScanner(os.Stdin)
 	urls := []string{}
@@ -38,13 +44,11 @@ func main() {
 		fmt.Println("")
 	}
 
-	injectionPayload, injectionResult := generatePayload()
-
 	// main logic
 	for _, u := range urls {
 		finalUrls := []string{}
 
-		u = replaceParameters(u, injectionPayload)
+		u, payloads, results := replaceParameters(u)
 		if u == "" {
 			continue
 		}
@@ -64,13 +68,15 @@ func main() {
 
 		// now loop the slice of finalUrls (either submitted OR 2 urls with http/https appended to them)
 		for _, uu := range finalUrls {
-			ssti := makeRequest(uu, injectionResult, quietMode)
+			ssti, injectionPayloadElement := makeRequest(uu, results, quietMode)
 			if ssti {
 				// if we had a leak, let the user know
-				fmt.Printf("%s\n", uu)
+				payload := payloads[injectionPayloadElement]
+				fmt.Printf("URL:%s -> Parameter Payload: %s\n", uu, payload)
 
 				if saveOutput {
-					outputToSave = append(outputToSave, uu)
+					line := uu + "|" + payload
+					outputToSave = append(outputToSave, line)
 				}
 			}
 		}
@@ -104,24 +110,54 @@ func banner() {
 
 // TODO: Should we randomise this? Do we care? probably not.
 // We should extend this to generate a payload PER parameter incase we get multiple injection points across a site. Store the payloads + results for loop them in the regex
-func generatePayload() (string, string) {
-	return "skid{{2*2}}life", "skid4life"
+func generatePayload(template string, paramNumber int) (string, string) {
+	payload := ""
+	injectionResult := ""
+
+	switch template {
+	case templateJinja2:
+		payload = "skid{{4*'4'}}life"
+		injectionResult = "skid4444life"
+
+	case templateMako:
+		payload = "ski${'4'.join('dl')}ife"
+		injectionResult = "skid4life"
+
+	case templateSmarty:
+		payload = "skid4{*comment*}life"
+		injectionResult = "skid4life"
+
+	case templateTwig:
+		payload = "skid{{2*'2'}}life"
+		injectionResult = "skid4life"
+
+	case "unknown":
+		payload = "skid${2*2}life"
+		injectionResult = "skid4life"
+	}
+
+	return payload, injectionResult
 }
 
-func replaceParameters(url string, payload string) string {
+// returns: url, slice of payloads, slice of results
+func replaceParameters(url string) (string, []string, []string) {
 	urlParamSplit := strings.Split(url, "?")
 	if len(urlParamSplit) != 2 {
-		return "" // ? was not identified in the URL. Skip it.
+		return "", nil, nil // ? was not identified in the URL. Skip it.
 	}
 
 	if len(urlParamSplit[1]) == 0 {
-		return "" // Although we had a ? in the URL, no parameters were actually identified as the amount of chars after the ? appeared to be 0
+		return "", nil, nil // Although we had a ? in the URL, no parameters were actually identified as the amount of chars after the ? appeared to be 0
 	}
 
 	parameterSplit := strings.Split(urlParamSplit[1], "&")
 	if len(parameterSplit) == 0 {
-		return "" // Although we had a ? in the URL, no parameters were actually identified
+		return "", nil, nil // Although we had a ? in the URL, no parameters were actually identified
 	}
+
+	generatedPayloadCount := 1            // start from 1 because we aren't CS students
+	generatedPayloads := []string{}       // collect all payloads ready to return
+	generatedPayloadResults := []string{} // collect all payload results ready to return
 
 	injectedParams := []string{}
 	for _, ps := range parameterSplit {
@@ -132,8 +168,15 @@ func replaceParameters(url string, payload string) string {
 			injectedParams = append(injectedParams, ps)
 		} else {
 			// we did manage to split. Let's inject the payload and rebuild the URL parameter
-			newParamAndVal := paramAndVal[0] + "=" + payload
+
+			// create a generic payload for an unknown templating engine (should be a 'catch' all type of payload?)
+			injectionPayload, injectionResult := generatePayload("unknown", generatedPayloadCount)
+			newParamAndVal := paramAndVal[0] + "=" + injectionPayload
 			injectedParams = append(injectedParams, newParamAndVal)
+
+			generatedPayloads = append(generatedPayloads, injectionPayload)
+			generatedPayloadResults = append(generatedPayloadResults, injectionResult)
+			generatedPayloadCount += 1
 		}
 	}
 
@@ -143,16 +186,16 @@ func replaceParameters(url string, payload string) string {
 	}
 
 	finalUrl = removeLastRune(finalUrl)
-	return finalUrl
+	return finalUrl, generatedPayloads, generatedPayloadResults
 }
 
-func makeRequest(url string, injectionCriteria string, quietMode bool) bool {
+func makeRequest(url string, injectionCriteria []string, quietMode bool) (bool, int) {
 	resp, err := http.Get(url)
 	if err != nil {
 		if !quietMode {
 			fmt.Println("[error] performing the request to:", url)
 		}
-		return false
+		return false, -1
 	}
 	defer resp.Body.Close()
 
@@ -162,12 +205,22 @@ func makeRequest(url string, injectionCriteria string, quietMode bool) bool {
 			if !quietMode {
 				fmt.Println("[error] reading response bytes from:", url)
 			}
-			return false
+			return false, -1
 		}
 		bodyString := string(bodyBytes)
-		return doesBodyIncludeInjectionResult(injectionCriteria, bodyString, quietMode)
+
+		includesResult := false
+		injectionPayload := -1
+		for i, ic := range injectionCriteria {
+			if doesBodyIncludeInjectionResult(ic, bodyString, quietMode) {
+				includesResult = true
+				injectionPayload = i
+				break
+			}
+		}
+		return includesResult, injectionPayload
 	} else {
-		return false
+		return false, -1
 	}
 }
 
