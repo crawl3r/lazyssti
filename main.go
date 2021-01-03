@@ -1,9 +1,12 @@
 package main
 
+// big up Hakluke, thanks for making hakrawler. I used your multi-threading as a basis so I could learn and convert this from single to multi <3
+
 import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -11,6 +14,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // global vars for templates
@@ -19,17 +24,18 @@ var templateMako = "Mako"     // -> ${7*7} -> ${"z".join("ab")} is a payload tha
 var templateSmarty = "Smarty" // -> ${7*7} -> a{*comment*}b is a payload that can identify Smarty
 var templateTwig = "Twig"     // -> {{7*'7'}} would result in 49 in Twig
 
+var out io.Writer = os.Stdout
+
 func main() {
-	sc := bufio.NewScanner(os.Stdin)
-	urls := []string{}
+	urls := make(chan string, 1)
+	ch := readStdin()
 
-	for sc.Scan() {
-		domain := strings.ToLower(sc.Text())
-
-		if domain != "" && len(domain) > 0 {
-			urls = append(urls, domain)
+	go func() {
+		for u := range ch {
+			urls <- u
 		}
-	}
+		close(urls)
+	}()
 
 	var outputFileFlag string
 	flag.StringVar(&outputFileFlag, "o", "", "Output file for possible SSTI vulnerable URLs")
@@ -45,54 +51,79 @@ func main() {
 		fmt.Println("")
 	}
 
-	// main logic
-	for _, u := range urls {
-		finalUrls := []string{}
+	writer := bufio.NewWriter(out)
+	var wg sync.WaitGroup
 
-		u, payloads, results := replaceParameters(u, -1, "unknown") // we pass -1 here so we replace all parameters
-		if u == "" {
-			continue
-		}
-
-		if !quietMode {
-			fmt.Println("Generated URL:", u)
-		}
-
-		// If the identified URL has neither http or https infront of it. Create both and scan them.
-		if !strings.Contains(u, "http://") && !strings.Contains(u, "https://") {
-			finalUrls = append(finalUrls, "http://"+u)
-			finalUrls = append(finalUrls, "https://"+u)
-		} else {
-			// else, just scan the submitted one as it has either protocol
-			finalUrls = append(finalUrls, u)
-		}
-
-		// now loop the slice of finalUrls (either submitted OR 2 urls with http/https appended to them)
-		for _, uu := range finalUrls {
-			ssti, injectionPayloadElements := makeRequest(uu, results, quietMode)
-			if ssti {
-				// if we had a possible SSTI win, let the user know
-				workingPayloads := ""
-				for i, wp := range injectionPayloadElements {
-					workingPayloads += payloads[wp]
-
-					if i != len(injectionPayloadElements)-1 {
-						workingPayloads += "|"
-					}
-				}
-
-				fmt.Printf("URL:%s -> Parameter Payload: %s\n", uu, workingPayloads)
-
-				// now we have seen a possible win, try figure out the template based on the hardcoded knowledge we have
-				attemptToIdentifyEngine(uu, injectionPayloadElements[0], quietMode) // this injectionPayloadElements[0] allows us to just replace the first vulnerable URL param
-
-				if saveOutput {
-					line := uu + "|" + workingPayloads
-					outputToSave = append(outputToSave, line)
-				}
+	// flush to writer periodically
+	t := time.NewTicker(time.Millisecond * 500)
+	defer t.Stop()
+	go func() {
+		for {
+			select {
+			case <-t.C:
+				writer.Flush()
 			}
 		}
+	}()
+
+	// main logic - now multi-threaded for a tonne of traffic, quickly. Hopefully it's still functional :D
+
+	for u := range urls {
+		wg.Add(1)
+		go func(site string) {
+			defer wg.Done()
+			finalUrls := []string{}
+
+			u, payloads, results := replaceParameters(u, -1, "unknown") // we pass -1 here so we replace all parameters
+			if u == "" {
+				return
+			}
+
+			if !quietMode {
+				fmt.Println("Generated URL:", u)
+			}
+
+			// If the identified URL has neither http or https infront of it. Create both and scan them.
+			if !strings.Contains(u, "http://") && !strings.Contains(u, "https://") {
+				finalUrls = append(finalUrls, "http://"+u)
+				finalUrls = append(finalUrls, "https://"+u)
+			} else {
+				// else, just scan the submitted one as it has either protocol
+				finalUrls = append(finalUrls, u)
+			}
+
+			// now loop the slice of finalUrls (either submitted OR 2 urls with http/https appended to them)
+			for _, uu := range finalUrls {
+				ssti, injectionPayloadElements := makeRequest(uu, results, quietMode)
+				if ssti {
+					// if we had a possible SSTI win, let the user know
+					workingPayloads := ""
+					for i, wp := range injectionPayloadElements {
+						workingPayloads += payloads[wp]
+
+						if i != len(injectionPayloadElements)-1 {
+							workingPayloads += "|"
+						}
+					}
+
+					fmt.Printf("URL:%s -> Parameter Payload: %s\n", uu, workingPayloads)
+
+					// now we have seen a possible win, try figure out the template based on the hardcoded knowledge we have
+					attemptToIdentifyEngine(uu, injectionPayloadElements[0], quietMode) // this injectionPayloadElements[0] allows us to just replace the first vulnerable URL param
+
+					if saveOutput {
+						line := uu + "|" + workingPayloads
+						outputToSave = append(outputToSave, line)
+					}
+				}
+			}
+		}(u)
 	}
+
+	wg.Wait()
+
+	// just in case anything is still in buffer
+	writer.Flush()
 
 	if saveOutput && len(outputToSave) > 0 {
 		file, err := os.OpenFile(outputFileFlag, os.O_CREATE|os.O_WRONLY, 0644)
@@ -118,6 +149,21 @@ func banner() {
 	fmt.Println("Generates SSTI URL's and highlights possible vulns")
 	fmt.Println("Run again with -q for cleaner output")
 	fmt.Println("---------------------------------------------------")
+}
+
+func readStdin() <-chan string {
+	lines := make(chan string)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(os.Stdin)
+		for sc.Scan() {
+			url := strings.ToLower(sc.Text())
+			if url != "" {
+				lines <- url
+			}
+		}
+	}()
+	return lines
 }
 
 // TODO: Should we randomise this? Do we care? probably not.
@@ -238,6 +284,8 @@ func makeRequest(url string, injectionCriteria []string, quietMode bool) (bool, 
 				break
 			}
 		}
+
+		fmt.Println("No SSTI in:", url)
 		return includesResult, workingPayloads
 	} else {
 		return false, nil
