@@ -2,8 +2,12 @@
   
 A lazy approach to chaining other golang bins together. Not made to replace the likes of qsreplace chains, just another option.  
   
-lazyssti attempts to identify the templating engine once a vulnerable parameter has been found. This hasn't been heavily tested in the wild but the logic worked locally on vulnerable apps. Any issues or derps, please let me know!  
+lazyssti attempts to identify the templating engine once a vulnerable parameter has been found. This hasn't been heavily tested in the wild but the logic worked locally on vulnerable apps. Any issues or derps, please let me know!
+
+### Thanks  
   
+Big thanks to Hakluke, I used Hakrawler's (https://github.com/hakluke/hakrawler) concurrency and picked at the concurrency/goroutine code to patch mine. The speed increase is insane! Who'd have thought that more than 1 thread was faster than a single thread?! 
+
 ### Installation  
   
 ```

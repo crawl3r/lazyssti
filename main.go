@@ -285,7 +285,6 @@ func makeRequest(url string, injectionCriteria []string, quietMode bool) (bool, 
 			}
 		}
 
-		fmt.Println("No SSTI in:", url)
 		return includesResult, workingPayloads
 	} else {
 		return false, nil
