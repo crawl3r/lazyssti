@@ -87,6 +87,10 @@ func main() {
 			if !strings.Contains(u, "http://") && !strings.Contains(u, "https://") {
 				finalUrls = append(finalUrls, "http://"+u)
 				finalUrls = append(finalUrls, "https://"+u)
+			} else if strings.Contains(u, "http://") {
+				finalUrls = append(finalUrls, "https://"+u)
+			} else if strings.Contains(u, "https://") {
+				finalUrls = append(finalUrls, "http://"+u)
 			} else {
 				// else, just scan the submitted one as it has either protocol
 				finalUrls = append(finalUrls, u)
