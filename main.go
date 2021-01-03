@@ -234,7 +234,7 @@ func makeRequest(url string, injectionCriteria []string, quietMode bool) (bool, 
 		for i, ic := range injectionCriteria {
 			if doesBodyIncludeInjectionResult(ic, bodyString, quietMode) {
 				includesResult = true
-				workingPayloads = append(workingPayloads, i) // we probably want to accumulate all working payloads as multiple might trigger in one page?
+				workingPayloads = append(workingPayloads, i)
 				break
 			}
 		}
