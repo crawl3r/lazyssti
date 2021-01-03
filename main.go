@@ -69,17 +69,25 @@ func main() {
 
 		// now loop the slice of finalUrls (either submitted OR 2 urls with http/https appended to them)
 		for _, uu := range finalUrls {
-			ssti, injectionPayloadElement := makeRequest(uu, results, quietMode)
+			ssti, injectionPayloadElements := makeRequest(uu, results, quietMode)
 			if ssti {
 				// if we had a possible SSTI win, let the user know
-				payload := payloads[injectionPayloadElement]
-				fmt.Printf("URL:%s -> Parameter Payload: %s\n", uu, payload)
+				workingPayloads := ""
+				for i, wp := range injectionPayloadElements {
+					workingPayloads += payloads[wp]
+
+					if i != len(injectionPayloadElements)-1 {
+						workingPayloads += "|"
+					}
+				}
+
+				fmt.Printf("URL:%s -> Parameter Payload: %s\n", uu, workingPayloads)
 
 				// now we have seen a possible win, try figure out the template based on the hardcoded knowledge we have
-				attemptToIdentifyEngine(uu, injectionPayloadElement, quietMode) // this injectionPayloadElement allows us to just replace the one param with a payload
+				attemptToIdentifyEngine(uu, injectionPayloadElements[0], quietMode) // this injectionPayloadElements[0] allows us to just replace the first vulnerable URL param
 
 				if saveOutput {
-					line := uu + "|" + payload
+					line := uu + "|" + workingPayloads
 					outputToSave = append(outputToSave, line)
 				}
 			}
@@ -201,13 +209,13 @@ func replaceParameters(url string, paramToReplace int, template string) (string,
 	return finalUrl, generatedPayloads, generatedPayloadResults
 }
 
-func makeRequest(url string, injectionCriteria []string, quietMode bool) (bool, int) {
+func makeRequest(url string, injectionCriteria []string, quietMode bool) (bool, []int) {
 	resp, err := http.Get(url)
 	if err != nil {
 		if !quietMode {
 			fmt.Println("[error] performing the request to:", url)
 		}
-		return false, -1
+		return false, nil
 	}
 	defer resp.Body.Close()
 
@@ -217,22 +225,22 @@ func makeRequest(url string, injectionCriteria []string, quietMode bool) (bool, 
 			if !quietMode {
 				fmt.Println("[error] reading response bytes from:", url)
 			}
-			return false, -1
+			return false, nil
 		}
 		bodyString := string(bodyBytes)
 
 		includesResult := false
-		injectionPayload := -1
+		workingPayloads := []int{}
 		for i, ic := range injectionCriteria {
 			if doesBodyIncludeInjectionResult(ic, bodyString, quietMode) {
 				includesResult = true
-				injectionPayload = i
+				workingPayloads = append(workingPayloads, i) // we probably want to accumulate all working payloads as multiple might trigger in one page?
 				break
 			}
 		}
-		return includesResult, injectionPayload
+		return includesResult, workingPayloads
 	} else {
-		return false, -1
+		return false, nil
 	}
 }
 
@@ -261,11 +269,19 @@ func attemptToIdentifyEngine(url string, vulnParamElement int, quietMode bool) [
 			return nil
 		}
 
-		ssti, injectionPayloadElement := makeRequest(u, results, quietMode)
+		ssti, injectionPayloadElements := makeRequest(u, results, quietMode)
 		if ssti {
-			// if we found a possible ssti, store the template that we have possibly identified
-			payload := payloads[injectionPayloadElement]
-			fmt.Printf("URL: %s -> Parameter Payload: %s -> Engine: %s\n", u, payload, t)
+			// if we found a possible ssti, log and store the template that we have possibly identified
+			workingPayloads := ""
+			for i, wp := range injectionPayloadElements {
+				workingPayloads += payloads[wp]
+
+				if i != len(injectionPayloadElements)-1 {
+					workingPayloads += "|"
+				}
+			}
+
+			fmt.Printf("URL: %s -> Parameter Payload: %s -> Engine: %s\n", u, workingPayloads, t)
 			possibleEngines = append(possibleEngines, t)
 		}
 	}
