@@ -32,8 +32,8 @@ func main() {
 	}
 
 	var outputFileFlag string
-	flag.StringVar(&outputFileFlag, "o", "", "Output file for identified leakd source")
-	quietModeFlag := flag.Bool("q", false, "Only output the URL's with leaked source")
+	flag.StringVar(&outputFileFlag, "o", "", "Output file for possible SSTI vulnerable URLs")
+	quietModeFlag := flag.Bool("q", false, "Only output the URLs with possible SSTI vulnerabilities")
 	flag.Parse()
 
 	quietMode := *quietModeFlag
@@ -49,7 +49,7 @@ func main() {
 	for _, u := range urls {
 		finalUrls := []string{}
 
-		u, payloads, results := replaceParameters(u)
+		u, payloads, results := replaceParameters(u, -1, "unknown") // we pass -1 here so we replace all parameters
 		if u == "" {
 			continue
 		}
@@ -71,9 +71,12 @@ func main() {
 		for _, uu := range finalUrls {
 			ssti, injectionPayloadElement := makeRequest(uu, results, quietMode)
 			if ssti {
-				// if we had a leak, let the user know
+				// if we had a possible SSTI win, let the user know
 				payload := payloads[injectionPayloadElement]
 				fmt.Printf("URL:%s -> Parameter Payload: %s\n", uu, payload)
+
+				// now we have seen a possible win, try figure out the template based on the hardcoded knowledge we have
+				attemptToIdentifyEngine(uu, injectionPayloadElement, quietMode) // this injectionPayloadElement allows us to just replace the one param with a payload
 
 				if saveOutput {
 					line := uu + "|" + payload
@@ -141,7 +144,7 @@ func generatePayload(template string, paramNumber int) (string, string) {
 }
 
 // returns: url, slice of payloads, slice of results
-func replaceParameters(url string) (string, []string, []string) {
+func replaceParameters(url string, paramToReplace int, template string) (string, []string, []string) {
 	urlParamSplit := strings.Split(url, "?")
 	if len(urlParamSplit) != 2 {
 		return "", nil, nil // ? was not identified in the URL. Skip it.
@@ -161,7 +164,15 @@ func replaceParameters(url string) (string, []string, []string) {
 	generatedPayloadResults := []string{} // collect all payload results ready to return
 
 	injectedParams := []string{}
-	for _, ps := range parameterSplit {
+	for i, ps := range parameterSplit {
+		// only replace the target parameter if specified in the function parameters
+		if paramToReplace != -1 {
+			if i != paramToReplace {
+				injectedParams = append(injectedParams, ps)
+				continue
+			}
+		}
+
 		paramAndVal := strings.Split(ps, "=")
 
 		if len(paramAndVal) == 1 {
@@ -171,7 +182,7 @@ func replaceParameters(url string) (string, []string, []string) {
 			// we did manage to split. Let's inject the payload and rebuild the URL parameter
 
 			// create a generic payload for an unknown templating engine (should be a 'catch' all type of payload?)
-			injectionPayload, injectionResult := generatePayload("unknown", generatedPayloadCount)
+			injectionPayload, injectionResult := generatePayload(template, generatedPayloadCount)
 			newParamAndVal := paramAndVal[0] + "=" + injectionPayload
 			injectedParams = append(injectedParams, newParamAndVal)
 
@@ -228,6 +239,38 @@ func makeRequest(url string, injectionCriteria []string, quietMode bool) (bool, 
 func doesBodyIncludeInjectionResult(criteria string, body string, quietMode bool) bool {
 	r, _ := regexp.Compile(criteria)
 	return r.MatchString(body)
+}
+
+func attemptToIdentifyEngine(url string, vulnParamElement int, quietMode bool) []string {
+	// this might be meh, but make a request to the same URL per template based on the payloads we have
+	// for this, we don't care about the number of parameters - we just want to try identify the template engine
+
+	/*
+		var templateJinja2 = "Jinja2" // -> {{7*'7'}} would result in 7777777 in Jinja2
+		var templateMako = "Mako"     // -> ${7*7} -> ${"z".join("ab")} is a payload that can identify Mako
+		var templateSmarty = "Smarty" // -> ${7*7} -> a{*comment*}b is a payload that can identify Smarty
+		var templateTwig = "Twig"     // -> {{7*'7'}} would result in 49 in Twig
+	*/
+
+	templates := []string{templateJinja2, templateMako, templateSmarty, templateTwig}
+	possibleEngines := []string{}
+
+	for _, t := range templates {
+		u, payloads, results := replaceParameters(url, vulnParamElement, t)
+		if u == "" {
+			return nil
+		}
+
+		ssti, injectionPayloadElement := makeRequest(u, results, quietMode)
+		if ssti {
+			// if we found a possible ssti, store the template that we have possibly identified
+			payload := payloads[injectionPayloadElement]
+			fmt.Printf("URL: %s -> Parameter Payload: %s -> Engine: %s\n", u, payload, t)
+			possibleEngines = append(possibleEngines, t)
+		}
+	}
+
+	return possibleEngines
 }
 
 // use runes so we aren't just stuck with ASCII incase we have some funky use cases for this
