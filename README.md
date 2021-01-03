@@ -2,6 +2,8 @@
   
 A lazy approach to chaining other golang bins together. Not made to replace the likes of qsreplace chains, just another option.  
   
+lazyssti attempts to identify the templating engine once a vulnerable parameter has been found. This hasn't been heavily tested in the wild but the logic worked locally on vulnerable apps. Any issues or derps, please let me know!  
+  
 ### Installation  
   
 ```
